@@ -3,7 +3,10 @@ import base64
 import cv2
 import numpy as np
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from insightface.app import FaceAnalysis
+
+MAX_WORKERS = 10  # Número máximo de descargas/procesamientos paralelos
 
 # =====================================================
 # Load model on startup
@@ -36,6 +39,40 @@ def download_image(url: str):
     except Exception:
         return None
 
+
+def process_single_image(item):
+    """Procesa una sola imagen del batch (descarga + detección de caras)"""
+    try:
+        img = download_image(item.get("url"))
+        if img is None:
+            raise ValueError("Invalid image or URL")
+
+        faces = face_app.get(img)
+
+        faces_data = [
+            {
+                "face_index": idx,
+                "embedding": face.embedding.tolist(),
+                "confidence": float(face.det_score)
+            }
+            for idx, face in enumerate(faces)
+        ]
+
+        return {
+            "id": item.get("id"),
+            "faces_count": len(faces),
+            "faces": faces_data,
+            "error": None
+        }
+
+    except Exception as e:
+        return {
+            "id": item.get("id"),
+            "faces_count": 0,
+            "faces": [],
+            "error": str(e)
+        }
+
 # =====================================================
 # Handler
 # =====================================================
@@ -45,39 +82,10 @@ def handler(event):
 
     # Modo batch (URLs) - /index-batch
     if "images" in input_data:
-        results = []
+        images = input_data["images"]
 
-        for item in input_data["images"]:
-            try:
-                img = download_image(item.get("url"))
-                if img is None:
-                    raise ValueError("Invalid image or URL")
-
-                faces = face_app.get(img)
-
-                faces_data = [
-                    {
-                        "face_index": idx,
-                        "embedding": face.embedding.tolist(),
-                        "confidence": float(face.det_score)
-                    }
-                    for idx, face in enumerate(faces)
-                ]
-
-                results.append({
-                    "id": item.get("id"),
-                    "faces_count": len(faces),
-                    "faces": faces_data,
-                    "error": None
-                })
-
-            except Exception as e:
-                results.append({
-                    "id": item.get("id"),
-                    "faces_count": 0,
-                    "faces": [],
-                    "error": str(e)
-                })
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            results = list(executor.map(process_single_image, images))
 
         return {"results": results}
 
