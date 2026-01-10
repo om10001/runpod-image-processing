@@ -17,6 +17,6 @@ RUN pip install --upgrade pip \
 # Copiar app
 COPY app.py .
 
-EXPOSE 8000
+# RunPod serverless maneja el puerto internamente
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "app.py"]
