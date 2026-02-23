@@ -1,11 +1,17 @@
-FROM python:3.10-slim
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# Dependencias del sistema
+# Instalar Python 3.10 y dependencias del sistema
 RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
     build-essential \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
+
+# Crear symlinks para python (si no existen)
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
 
 WORKDIR /app
 

@@ -4,5 +4,5 @@ numpy
 requests
 opencv-python-headless
 insightface
-onnxruntime
+onnxruntime-gpu
 runpod
