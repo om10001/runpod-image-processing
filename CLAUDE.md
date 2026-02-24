@@ -4,28 +4,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a RunPod serverless function for face detection and embedding generation using InsightFace (buffalo_l model). It processes images either individually (base64) or in batches (URLs) and returns 512-dimensional face embeddings suitable for facial recognition and similarity matching.
+This is a RunPod serverless function for **face detection** and **bib number recognition** in sports photography. It uses:
+- **InsightFace (buffalo_l)** for face detection and 512-dimensional embeddings
+- **PaddleOCR** for bib number detection
+
+Both models run on GPU for optimal performance. Processes images individually (base64) or in batches (URLs) with three modes: `face`, `bib`, or `both`.
 
 ## Architecture
 
 ### Core Components
 
 - **[app.py](app.py)**: Single-file serverless handler
-  - `handler()`: Main RunPod entry point that routes between single/batch modes
-  - `process_single_image()`: Downloads and processes one image (used by batch mode)
+  - `handler()`: Main RunPod entry point supporting `face`, `bib`, or `both` modes
+  - `process_single_image()`: Downloads and processes one image with face/bib detection
+  - `detect_bib_numbers()`: PaddleOCR-based bib number extraction
   - `decode_base64_image()` / `download_image()`: Image loading utilities
   - Uses ThreadPoolExecutor with `MAX_WORKERS=10` for parallel batch processing
 
 ### Processing Modes
 
-1. **Single mode** (`input.image`): Base64 image → returns first face embedding only
-2. **Batch mode** (`input.images`): List of `{id, url}` objects → returns all faces per image with parallel download/processing
+The API supports three detection modes via `input.mode`:
+
+1. **`"face"`** (default): Face detection only → returns face embeddings
+2. **`"bib"`**: Bib number detection only → returns bib numbers and bboxes
+3. **`"both"`**: Combined detection → returns both faces and bibs
+
+Input formats:
+- **Batch mode** (`input.images`): List of `{id, url}` objects → parallel processing
+- **Single mode** (`input.image`): Base64 string → single image processing
 
 ### Model Initialization
 
-The InsightFace model (`buffalo_l`) is loaded at startup with GPU support (`ctx_id=0`). This is intentional for serverless warm starts - the model persists across invocations.
+Both models are loaded at startup with GPU support:
 
-**Critical**: The Dockerfile uses `nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04` base image and `onnxruntime-gpu` to enable GPU acceleration. Without these, the model will fail or fall back to CPU (extremely slow).
+1. **InsightFace** (`buffalo_l`) - Face detection
+   - Loaded with `ctx_id=0` for GPU acceleration
+   - Requires `onnxruntime-gpu` and CUDA base image
+
+2. **PaddleOCR** - Bib number detection
+   - Loaded with `use_gpu=True`
+   - Requires `paddlepaddle-gpu` and CUDA
+
+Models persist across invocations for fast warm starts.
+
+**Critical**: The Dockerfile uses `nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04` base image. Without CUDA, both models fall back to CPU (60x slower).
 
 ## Development Commands
 
@@ -56,7 +78,7 @@ docker run --gpus all -p 8000:8000 runpod-face-processing
 2. Create serverless endpoint in RunPod dashboard
 3. **Required**: Select a GPU worker (RTX A4000, RTX 3090, etc.). CPU workers will not work.
 4. Set container image to your Docker Hub image
-5. Recommended GPU memory: 10GB+ for batch processing
+5. Recommended GPU memory: 12GB+ for batch processing with both models
 
 ## Key Implementation Details
 
@@ -71,33 +93,59 @@ docker run --gpus all -p 8000:8000 runpod-face-processing
 - Batch mode: Each item gets individual error field, never fails entire batch
 - Invalid images return gracefully with error message
 
-### Face Data Structure
+### Response Data Structures
+
 ```python
-# Single mode returns:
+# Single mode - face only (mode="face"):
 {
   "faces_count": int,
   "embedding": List[float],  # First face only, 512 dims
   "error": str | None
 }
 
-# Batch mode returns per image:
+# Single mode - bib only (mode="bib"):
 {
-  "id": str,  # From input
-  "faces_count": int,
-  "faces": [
+  "bibs_count": int,
+  "bibs": [
     {
-      "face_index": int,
-      "embedding": List[float],  # 512 dims
-      "confidence": float  # det_score
+      "number": str,  # e.g., "12345"
+      "confidence": float,
+      "bbox": [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
     }
   ],
   "error": str | None
+}
+
+# Batch mode - both (mode="both"):
+{
+  "results": [
+    {
+      "id": str,
+      "faces_count": int,
+      "faces": [
+        {
+          "face_index": int,
+          "embedding": List[float],
+          "confidence": float
+        }
+      ],
+      "bibs_count": int,
+      "bibs": [
+        {
+          "number": str,
+          "confidence": float,
+          "bbox": [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+        }
+      ],
+      "error": str | None
+    }
+  ]
 }
 ```
 
 ## API Usage
 
-See [docs.md](docs.md) for complete API documentation.
+See [API_USAGE.md](API_USAGE.md) for complete API documentation with examples.
 
 **Base URL**: `https://api.runpod.ai/v2/{ENDPOINT_ID}`
 
@@ -119,7 +167,9 @@ See [docs.md](docs.md) for complete API documentation.
 ## Dependencies
 
 - `insightface`: Face detection and embedding generation
-- `onnxruntime-gpu`: **GPU-accelerated** ONNX runtime for model inference (critical for performance)
+- `paddleocr`: Bib number OCR detection
+- `onnxruntime-gpu`: **GPU-accelerated** ONNX runtime for InsightFace (critical for performance)
+- `paddlepaddle-gpu`: **GPU-accelerated** PaddlePaddle for OCR
 - `opencv-python-headless`: Image decoding (no GUI dependencies)
 - `runpod`: Serverless framework integration
 - `requests`: HTTP downloads for batch mode
@@ -127,16 +177,22 @@ See [docs.md](docs.md) for complete API documentation.
 ## GPU Configuration
 
 ### Performance Comparison
-| Configuration | Time for 100 images | Notes |
-|--------------|---------------------|-------|
-| CPU (`ctx_id=-1`) | ~60+ minutes | Using `onnxruntime` |
-| GPU (`ctx_id=0`) | ~2-3 minutes | Using `onnxruntime-gpu` + CUDA base image |
+| Configuration | Mode | Time for 100 images | Notes |
+|--------------|------|---------------------|-------|
+| CPU | face | ~60+ minutes | Using `onnxruntime` |
+| GPU | face | ~2-3 minutes | Using `onnxruntime-gpu` + CUDA |
+| GPU | bib | ~3-5 minutes | Using `paddlepaddle-gpu` + CUDA |
+| GPU | both | ~4-6 minutes | Both models running on GPU |
 
 ### Requirements for GPU Mode
 1. **Base image**: `nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04`
-2. **Python package**: `onnxruntime-gpu` (not `onnxruntime`)
+2. **Python packages**:
+   - `onnxruntime-gpu` (not `onnxruntime`) for InsightFace
+   - `paddlepaddle-gpu` for PaddleOCR
 3. **RunPod worker**: Must select GPU instance (RTX A4000, RTX 3090, etc.)
-4. **Code config**: `face_app.prepare(ctx_id=0)` in [app.py:16](app.py#L16)
+4. **Code config**:
+   - `face_app.prepare(ctx_id=0)` in [app.py:30](app.py#L30)
+   - `PaddleOCR(use_gpu=True)` in [app.py:35](app.py#L35)
 
 ### Troubleshooting GPU Issues
 - **Error "CUDA not available"**: Rebuild Docker image with CUDA base

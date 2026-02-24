@@ -6,3 +6,5 @@ opencv-python-headless
 insightface
 onnxruntime-gpu
 runpod
+paddleocr
+paddlepaddle-gpu
