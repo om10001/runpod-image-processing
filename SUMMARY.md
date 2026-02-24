@@ -235,7 +235,8 @@ Assuming $0.50/hour for RTX A5000:
 |------|------|------|
 | 100 images (both) | ~5 min | ~$0.04 |
 | 1000 images (both) | ~50 min | ~$0.42 |
-| 10000 images (both) | ~8 hours | ~$4.00 |
+| 5000 images (both) | **~10-15 min** | **~$0.08-0.12** |
+| 10000 images (both) | ~30 min | ~$0.25 |
 
 *Costs vary based on GPU type and region*
 
