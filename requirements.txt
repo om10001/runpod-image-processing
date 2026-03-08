@@ -1,10 +1,8 @@
-fastapi
-uvicorn
 numpy
 requests
 opencv-python-headless
 insightface
-onnxruntime-gpu
+onnxruntime-gpu==1.16.3
 runpod
 paddleocr
-paddlepaddle-gpu
+paddlepaddle-gpu==2.5.2

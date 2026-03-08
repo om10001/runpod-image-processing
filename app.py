@@ -26,14 +26,22 @@ print(f"CUDA available: {'CUDAExecutionProvider' in ort.get_available_providers(
 
 # Face detection model (InsightFace)
 print("Loading InsightFace model...")
-face_app = FaceAnalysis(name="buffalo_l")
-face_app.prepare(ctx_id=0)  # 0 = GPU
-print("✓ InsightFace initialized with GPU (ctx_id=0)")
+try:
+    face_app = FaceAnalysis(name="buffalo_l")
+    face_app.prepare(ctx_id=0)  # 0 = GPU
+    print("✓ InsightFace initialized with GPU (ctx_id=0)")
+except Exception as e:
+    print(f"✗ InsightFace initialization failed: {e}")
+    raise
 
 # Bib number detection model (PaddleOCR)
 print("Loading PaddleOCR model...")
-ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=True, show_log=False)
-print("✓ PaddleOCR initialized with GPU")
+try:
+    ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=True, show_log=False)
+    print("✓ PaddleOCR initialized with GPU")
+except Exception as e:
+    print(f"✗ PaddleOCR initialization failed: {e}")
+    raise
 print("=======================")
 
 # =====================================================
