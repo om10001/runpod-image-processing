@@ -22,10 +22,14 @@ COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Pre-download InsightFace buffalo_l model (CPU during build, GPU at runtime)
-RUN python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l'); app.prepare(ctx_id=-1)"
+# Pre-download InsightFace buffalo_l model
+# onnxruntime-gpu needs CUDA even for CPU mode, so swap to CPU version during build
+RUN pip install onnxruntime==1.16.3 && \
+    python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l'); app.prepare(ctx_id=-1)" && \
+    pip uninstall -y onnxruntime && \
+    pip install onnxruntime-gpu==1.16.3
 
-# Pre-download PaddleOCR models (CPU during build, GPU at runtime)
+# Pre-download PaddleOCR models (paddlepaddle-gpu supports CPU mode natively)
 RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)"
 
 # Copiar app
