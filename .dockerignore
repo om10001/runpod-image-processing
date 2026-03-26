@@ -1,0 +1,20 @@
+# Dev/test files — not needed in production image
+test_runner.py
+image.b64
+im.png
+*.b64
+
+# Git
+.git
+.gitignore
+
+# Docs
+*.md
+docs.md
+process.md
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache

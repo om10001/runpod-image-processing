@@ -22,8 +22,10 @@ COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Pre-download InsightFace buffalo_l model (CPU during build, GPU at runtime)
-RUN python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l'); app.prepare(ctx_id=-1)"
+# Pre-download InsightFace buffalo_l model weights.
+# Force CPUExecutionProvider explicitly so onnxruntime-gpu never touches CUDA
+# during build (buildkit has no compatible CUDA driver).
+RUN python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']); app.prepare(ctx_id=-1)"
 
 # Pre-download PaddleOCR models (CPU during build, GPU at runtime)
 RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)"
