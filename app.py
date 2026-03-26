@@ -301,14 +301,27 @@ class BibDetector:
     def __init__(self, config: Config) -> None:
         self._min_confidence = config.min_bib_confidence
         self._max_digits = config.max_bib_digits
-        logger.info("Loading PaddleOCR gpu=%s ...", config.gpu_ctx >= 0)
-        self._ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang="en",
-            use_gpu=(config.gpu_ctx >= 0),
-            show_log=False,
-        )
+        use_gpu = config.gpu_ctx >= 0
+        logger.info("Loading PaddleOCR gpu=%s ...", use_gpu)
+        self._ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu, show_log=False)
+        if use_gpu:
+            self._ocr = self._probe_or_fallback(self._ocr)
         logger.info("PaddleOCR ready")
+
+    def _probe_or_fallback(self, ocr: PaddleOCR) -> PaddleOCR:
+        """
+        Run a single tiny inference to verify cuDNN loads correctly.
+        Falls back to CPU once at startup rather than failing per-image at runtime.
+        This catches CUDA 11.8 / cuDNN ABI mismatches (e.g. wrong paddlepaddle-gpu build).
+        """
+        try:
+            ocr.ocr(np.zeros((32, 32, 3), dtype=np.uint8), cls=False)
+            return ocr
+        except Exception as exc:
+            logger.warning(
+                "PaddleOCR GPU probe failed (%s) — switching to CPU for this session", exc
+            )
+            return PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False, show_log=False)
 
     def process(self, image: np.ndarray) -> list[BibData]:
         """

@@ -17,10 +17,16 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
 
 WORKDIR /app
 
-# Instalar dependencias Python
-COPY requirements.txt .
+# Instalar PaddlePaddle GPU con build específico para CUDA 11.8.
+# El paquete PyPI por defecto (paddlepaddle-gpu==2.5.2) apunta a CUDA 11.2 y
+# falla con "Cannot load cudnn shared library" en imágenes CUDA 11.8.
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir paddlepaddle-gpu==2.5.2.post117 \
+       -f https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/stable.html
+
+# Instalar el resto de dependencias Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download InsightFace buffalo_l model weights.
 # Force CPUExecutionProvider explicitly so onnxruntime-gpu never touches CUDA
