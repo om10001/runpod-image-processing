@@ -1,8 +1,8 @@
-numpy
+numpy==1.26.4
 requests
 opencv-python-headless
 insightface
 onnxruntime-gpu==1.16.3
 runpod
-paddleocr
+paddleocr==2.10.0
 paddlepaddle-gpu==2.5.2

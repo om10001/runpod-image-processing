@@ -413,7 +413,10 @@ results.forEach(result => {
 
 ### Per-Image Errors (Batch Mode)
 
-Images with errors return individual error messages without failing the entire batch:
+Images with errors return individual error messages without failing the entire batch.
+
+Note: batch responses include fields only for the requested `mode`. The example
+below assumes `mode: "both"`.
 
 ```json
 {
