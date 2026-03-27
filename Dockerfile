@@ -15,11 +15,22 @@ RUN apt-get update && apt-get install -y \
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
     ln -sf /usr/bin/pip3 /usr/bin/pip
 
+# Fix CUDA dynamic libs: the runtime image ships versioned .so files but
+# PaddlePaddle's dynload calls dlopen without version suffix — it never finds them.
+# The devel image creates these symlinks automatically; we add them manually here.
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.8 \
+           /usr/lib/x86_64-linux-gnu/libcudnn.so && \
+    ln -sf /usr/local/cuda-11.8/targets/x86_64-linux/lib/libcublas.so.11 \
+           /usr/local/cuda-11.8/targets/x86_64-linux/lib/libcublas.so && \
+    ln -sf /usr/local/cuda-11.8/targets/x86_64-linux/lib/libcublasLt.so.11 \
+           /usr/local/cuda-11.8/targets/x86_64-linux/lib/libcublasLt.so && \
+    ldconfig
+
 WORKDIR /app
 
 # Instalar PaddlePaddle GPU con build específico para CUDA 11.8.
-# El paquete PyPI por defecto (paddlepaddle-gpu==2.5.2) apunta a CUDA 11.2 y
-# falla con "Cannot load cudnn shared library" en imágenes CUDA 11.8.
+# post117 = CUDA 11.7, backward-compatible con CUDA 11.8 runtime.
+# post118 no existe para 2.5.2; post120 (CUDA 12) no es compatible con esta imagen.
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir paddlepaddle-gpu==2.5.2.post117 \
        -f https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/stable.html

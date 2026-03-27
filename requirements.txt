@@ -6,6 +6,6 @@ onnxruntime-gpu==1.16.3
 runpod
 paddleocr==2.10.0
 # paddlepaddle-gpu is installed separately in Dockerfile with the CUDA 11.8
-# build (post117 = CUDA 11.7, backward-compatible with CUDA 11.8). post118 does
-# not exist for 2.5.2. The default PyPI paddlepaddle-gpu==2.5.2 targets CUDA 10.2
-# and fails with "Cannot load cudnn shared library" on CUDA 11.8 images.
+# build (post117 = CUDA 11.7, backward-compatible with CUDA 11.8).
+# The runtime image only ships libcudnn.so.8 — the Dockerfile adds a libcudnn.so
+# symlink so PaddlePaddle's dlopen("libcudnn.so") succeeds at runtime.
