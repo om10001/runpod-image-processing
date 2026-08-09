@@ -97,9 +97,17 @@ class Config:
     REQUEST_TIMEOUT       15    HTTP download timeout in seconds
     GPU_CTX                0    CUDA device index (0=GPU, -1=CPU fallback)
     FACE_MODEL      buffalo_l   InsightFace model name
-    MIN_BIB_CONFIDENCE  0.3     Minimum OCR confidence to accept a bib detection
+    FACE_DET_SIZE       1280    InsightFace detector input size (square). The
+                                640 default missed small faces in wide shots;
+                                1280 matches the ~1280px indexing derivative.
+    MIN_BIB_CONFIDENCE  0.45    Minimum OCR confidence to accept a bib detection
     MIN_BIB_DIGITS        2     Minimum digits accepted as a valid bib number
     MAX_BIB_DIGITS        5     Maximum digits accepted as a valid bib number
+    BIB_TARGET_LONG_SIDE 1600   Working resolution for bib OCR: images are
+                                resized so the long side equals this, and
+                                PaddleOCR's det_limit_side_len is raised to
+                                match (its 960 default silently downscaled
+                                whatever we fed it, wasting the upscale).
     BIB_ANGLE_CLS      false    Run PaddleOCR's 180-degree angle classifier
     REQUIRE_GPU        false    Abort instead of falling back to CPU inference
     """
@@ -108,9 +116,11 @@ class Config:
     request_timeout: int
     gpu_ctx: int
     face_model: str
+    face_det_size: int
     min_bib_confidence: float
     min_bib_digits: int
     max_bib_digits: int
+    bib_target_long_side: int
     bib_angle_cls: bool
     require_gpu: bool
 
@@ -122,9 +132,11 @@ class Config:
             request_timeout=int(os.getenv("REQUEST_TIMEOUT", "15")),
             gpu_ctx=int(os.getenv("GPU_CTX", "0")),
             face_model=os.getenv("FACE_MODEL", "buffalo_l"),
-            min_bib_confidence=float(os.getenv("MIN_BIB_CONFIDENCE", "0.3")),
+            face_det_size=int(os.getenv("FACE_DET_SIZE", "1280")),
+            min_bib_confidence=float(os.getenv("MIN_BIB_CONFIDENCE", "0.45")),
             min_bib_digits=int(os.getenv("MIN_BIB_DIGITS", "2")),
             max_bib_digits=int(os.getenv("MAX_BIB_DIGITS", "5")),
+            bib_target_long_side=int(os.getenv("BIB_TARGET_LONG_SIDE", "1600")),
             bib_angle_cls=os.getenv("BIB_ANGLE_CLS", "false").lower() == "true",
             require_gpu=os.getenv("REQUIRE_GPU", "false").lower() == "true",
         )
@@ -296,9 +308,20 @@ class FaceDetector:
     """Detects faces and returns 512-dim embeddings using InsightFace buffalo_l."""
 
     def __init__(self, config: Config) -> None:
-        logger.info("Loading InsightFace model=%s ctx_id=%d ...", config.face_model, config.gpu_ctx)
+        logger.info(
+            "Loading InsightFace model=%s ctx_id=%d det_size=%d ...",
+            config.face_model, config.gpu_ctx, config.face_det_size,
+        )
         self._app = FaceAnalysis(name=config.face_model)
-        self._app.prepare(ctx_id=config.gpu_ctx)
+        # det_size is the detector's working resolution. The library default
+        # (640) squeezes a whole race photo into 640px, at which a runner a few
+        # meters back has a ~15px face the detector never sees. 1280 roughly
+        # quadruples detection cost but recovers those faces — and matches the
+        # 1280px indexing derivative the caller sends.
+        self._app.prepare(
+            ctx_id=config.gpu_ctx,
+            det_size=(config.face_det_size, config.face_det_size),
+        )
         logger.info("InsightFace ready")
 
     def process(self, image: np.ndarray) -> list[FaceData]:
@@ -346,12 +369,27 @@ class BibDetector:
         self._max_digits = config.max_bib_digits
         self._require_gpu = config.require_gpu
         self._angle_cls = config.bib_angle_cls
+        self._target_long_side = config.bib_target_long_side
         use_gpu = config.gpu_ctx >= 0
-        logger.info("Loading PaddleOCR gpu=%s ...", use_gpu)
-        self._ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu, show_log=False)
+        logger.info("Loading PaddleOCR gpu=%s det_limit=%d ...", use_gpu, self._target_long_side)
+        # det_limit_side_len defaults to 960 with det_limit_type='max': PaddleOCR
+        # silently downscaled every input to 960px on the long side, so the
+        # pre-OCR upscale below never reached the text detector. Raise the limit
+        # to the same working resolution we resize to.
+        self._ocr = self._build_ocr(use_gpu)
         if use_gpu:
             self._ocr = self._probe_or_fallback(self._ocr)
         logger.info("PaddleOCR ready (device=%s)", "cpu" if BibDetector.on_cpu else "gpu")
+
+    def _build_ocr(self, use_gpu: bool) -> PaddleOCR:
+        return PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+            use_gpu=use_gpu,
+            show_log=False,
+            det_limit_side_len=self._target_long_side,
+            det_limit_type="max",
+        )
 
     def _probe_or_fallback(self, ocr: PaddleOCR) -> PaddleOCR:
         """
@@ -378,7 +416,7 @@ class BibDetector:
                 "build, or set REQUIRE_GPU=true to fail fast instead.", exc
             )
             BibDetector.on_cpu = True
-            return PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False, show_log=False)
+            return self._build_ocr(use_gpu=False)
 
     # Letter shapes that bib fonts render almost identically to a digit.
     # Applied only to tokens that are already mostly numeric (see
@@ -429,17 +467,22 @@ class BibDetector:
         Returns [] if none found or on error. Never raises.
         """
         try:
-            # Upscale small images so distant/small bib numbers stay legible to
-            # the text detector. Indexing often passes a downscaled thumbnail
-            # (~600px), at which a small bib becomes unreadable. Bring the long
-            # side up to ~1500px before OCR, then remap bboxes back.
+            # Normalize the working resolution: bring the long side to
+            # BIB_TARGET_LONG_SIDE in both directions, then remap bboxes back.
+            # Upscaling keeps small/distant bibs legible to the text detector
+            # (interpolation, so it only helps up to a point — real detail must
+            # come from the input rendition); downscaling bounds GPU cost when
+            # a full-resolution original is passed. The detector's own
+            # det_limit_side_len is raised to match, so this resolution is what
+            # the model actually sees.
             h, w = image.shape[:2]
             long_side = max(h, w)
             scale = 1.0
-            if long_side < 1500:
-                scale = 1500 / long_side
+            if long_side != self._target_long_side:
+                scale = self._target_long_side / long_side
+                interp = cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA
                 image = cv2.resize(image, (int(w * scale), int(h * scale)),
-                                    interpolation=cv2.INTER_CUBIC)
+                                    interpolation=interp)
 
             # cls=True runs PaddleOCR's 180-degree angle classifier on every
             # detected text box — roughly a quarter of OCR time. Race bibs are
