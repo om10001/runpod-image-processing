@@ -456,11 +456,21 @@ class BibDetector:
             # Repair lookalikes only when at most two characters are non-digit,
             # so "0515" misread as "O515" is fixed but "SOS" stays a word.
             if digit_count >= len(token) - 2:
-                token = token.translate(self._LOOKALIKES)
-            numbers.extend(re.findall(r"\d+", token))
+                repaired = token.translate(self._LOOKALIKES)
+                numbers.extend(re.findall(r"\d+", repaired))
+                # The repair can also INVENT digits: bib designs put vertical
+                # marks and rings right next to the number, OCR reads them as
+                # I/l/O, and the translation turns "I830O" into "18300" (ADIDAS
+                # TERREX stored 37 distinct phantom "1___0" numbers this way).
+                # Keep the digit runs of the unrepaired token too, so the real
+                # "830" is stored alongside and an exact search still matches.
+                if repaired != token:
+                    numbers.extend(re.findall(r"\d+", token))
+            else:
+                numbers.extend(re.findall(r"\d+", token))
         return numbers
 
-    def process(self, image: np.ndarray) -> list[BibData]:
+    def process(self, image: np.ndarray, image_id: str | None = None) -> list[BibData]:
         """
         Detect bib numbers in image.
         Returns list sorted by confidence (highest first), deduplicated.
@@ -492,6 +502,18 @@ class BibDetector:
             raw = self._ocr.ocr(image, cls=self._angle_cls)
             if not raw or not raw[0]:
                 return []
+
+            # Log the digit-bearing raw detections. When a stored number looks
+            # wrong, this line is the only way to tell a recognition error
+            # (model read "18300") from a filtering error (we mangled "830") —
+            # there is no way to re-run OCR on a specific photo after the fact.
+            digit_boxes = [
+                (text, round(float(conf), 2))
+                for _, (text, conf) in raw[0]
+                if any(c.isdigit() for c in text)
+            ]
+            if digit_boxes:
+                logger.info("Bib OCR raw id=%s: %s", image_id, digit_boxes)
 
             bibs: list[BibData] = []
             seen: set[str] = set()
@@ -589,7 +611,7 @@ class BatchProcessor:
             result.faces = self._face_detector.process(img)
             result.faces_count = len(result.faces)
         if mode in ("bib", "both"):
-            result.bibs = self._bib_detector.process(img)
+            result.bibs = self._bib_detector.process(img, image_id=item.get("id"))
             result.bibs_count = len(result.bibs)
         return result.to_dict_by_mode(mode)
 
